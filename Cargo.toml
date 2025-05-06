@@ -5,14 +5,17 @@ edition = "2021"
 
 [lib]
 name = "aeronyx_crypto"
+# This creates a dynamic library (.dylib on macOS, .so on Linux, .dll on Windows)
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
+chacha20poly1305 = "0.10.1"
+aes-gcm = "0.10.1"
+rand = "0.8.5"
 ed25519-dalek = "1.0.1"
-curve25519-dalek = "3.2.1"
 x25519-dalek = "1.2.0"
-chacha20poly1305 = "0.9.0"
-rand = "0.7"
-sha2 = "0.9"
-hkdf = "0.11"
-bs58 = "0.4.0"
+curve25519-dalek = "3.2.0"
+hkdf = "0.12.3"
+sha2 = "0.10.6"
+solana-sdk = "1.14.17"
+thiserror = "1.0.38"

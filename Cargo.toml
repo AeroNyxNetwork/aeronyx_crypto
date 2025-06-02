@@ -1,21 +1,78 @@
 [package]
-name = "aeronyx_crypto"
-version = "0.1.0"
+name = "aeronyx-crypto"
+version = "0.2.0"
 edition = "2021"
+authors = ["AeroNyx Team"]
+description = "Cryptographic library for AeroNyx DePIN network"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aeronyx/aeronyx-crypto"
 
 [lib]
 name = "aeronyx_crypto"
-# This creates a dynamic library (.dylib on macOS, .so on Linux, .dll on Windows)
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
+# Core crypto
 chacha20poly1305 = "0.10.1"
-aes-gcm = "0.10.1"
+aes-gcm = "0.10.3"
 rand = "0.8.5"
-ed25519-dalek = "1.0.1"
-x25519-dalek = "1.2.0"
-curve25519-dalek = "3.2.0"
+rand_chacha = "0.3.1"
+ed25519-dalek = "2.1.0"
+x25519-dalek = "2.0.0"
+curve25519-dalek = "4.1.1"
 hkdf = "0.12.3"
-sha2 = "0.10.6"
-solana-sdk = "1.14.17"
-thiserror = "1.0.38"
+sha2 = "0.10.8"
+hmac = "0.12.1"
+argon2 = "0.5.2"
+
+# Solana
+solana-sdk = "1.17.0"
+
+# Error handling
+thiserror = "1.0.50"
+
+# Security
+zeroize = { version = "1.7.0", features = ["derive"] }
+subtle = "2.5.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+# Performance
+lazy_static = "1.4.0"
+parking_lot = "0.12.1"
+
+# Base encoding
+bs58 = "0.5.0"
+
+# Platform specific
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc = "0.2"
+objc-foundation = "0.1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+
+[features]
+default = []
+serde = ["dep:serde", "dep:serde_json"]
+wasm = ["getrandom/js"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[[bench]]
+name = "crypto_benchmarks"
+harness = false

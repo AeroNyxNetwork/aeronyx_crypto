@@ -1,73 +1,132 @@
-@echo off
-REM Build script for AeroNyx Rust Crypto library on Windows
+//! Build script for AeroNyx crypto library
+//! Configures platform-specific build settings
 
-echo Building AeroNyx Crypto for Windows...
-echo.
+use std::env;
 
-REM Check for Rust installation
-where cargo >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo Error: Rust/Cargo not found in PATH
-    echo Please install Rust from https://rustup.rs/
-    exit /b 1
-)
+fn main() {
+    let target = env::var("TARGET").unwrap();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    
+    // Platform-specific configuration
+    match target_os.as_str() {
+        "windows" => {
+            configure_windows(&target);
+        }
+        "macos" => {
+            configure_macos(&target);
+        }
+        "ios" => {
+            configure_ios(&target);
+        }
+        "android" => {
+            configure_android(&target);
+        }
+        "linux" => {
+            configure_linux(&target);
+        }
+        _ => {
+            println!("cargo:warning=Unsupported target OS: {}", target_os);
+        }
+    }
+    
+    // Generate version information
+    generate_version_info();
+}
 
-REM Set environment variables
-set RUST_BACKTRACE=1
-set CARGO_INCREMENTAL=0
+fn configure_windows(target: &str) {
+    println!("cargo:rerun-if-changed=build.rs");
+    
+    // Link Windows system libraries
+    println!("cargo:rustc-link-lib=advapi32");
+    println!("cargo:rustc-link-lib=crypt32");
+    println!("cargo:rustc-link-lib=kernel32");
+    println!("cargo:rustc-link-lib=user32");
+    
+    // Enable Windows-specific features
+    println!("cargo:rustc-cfg=feature=\"windows_secure_storage\"");
+    
+    // Set Windows SDK paths if needed
+    if target.contains("msvc") {
+        // MSVC-specific settings
+        println!("cargo:rustc-link-arg=/NXCOMPAT");
+        println!("cargo:rustc-link-arg=/DYNAMICBASE");
+        println!("cargo:rustc-link-arg=/LARGEADDRESSAWARE");
+    }
+    
+    // Embed Windows resources
+    #[cfg(windows)]
+    {
+        use winres::WindowsResource;
+        WindowsResource::new()
+            .set_icon("resources/aeronyx.ico")
+            .set("ProductName", "AeroNyx Crypto")
+            .set("FileDescription", "Cryptographic library for AeroNyx DePIN network")
+            .set("LegalCopyright", "Copyright © 2025 AeroNyx Team")
+            .compile()
+            .unwrap();
+    }
+}
 
-REM Clean previous builds
-echo Cleaning previous builds...
-cargo clean
+fn configure_macos(target: &str) {
+    println!("cargo:rustc-link-lib=framework=Security");
+    println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    
+    if target.contains("ios") {
+        println!("cargo:rustc-link-lib=framework=UIKit");
+    } else {
+        println!("cargo:rustc-link-lib=framework=AppKit");
+    }
+    
+    // Enable macOS-specific features
+    println!("cargo:rustc-cfg=feature=\"macos_keychain\"");
+}
 
-REM Build for Windows x86_64
-echo.
-echo Building for x86_64-pc-windows-msvc...
-cargo build --release --target x86_64-pc-windows-msvc
-if %ERRORLEVEL% NEQ 0 (
-    echo Build failed for x86_64-pc-windows-msvc
-    exit /b 1
-)
+fn configure_ios(_target: &str) {
+    println!("cargo:rustc-link-lib=framework=Security");
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=UIKit");
+    
+    // Enable iOS-specific features
+    println!("cargo:rustc-cfg=feature=\"ios_keychain\"");
+}
 
-REM Build for Windows ARM64 (if toolchain is installed)
-echo.
-echo Checking for ARM64 toolchain...
-rustup target list --installed | findstr "aarch64-pc-windows-msvc" >nul
-if %ERRORLEVEL% EQU 0 (
-    echo Building for aarch64-pc-windows-msvc...
-    cargo build --release --target aarch64-pc-windows-msvc
-    if %ERRORLEVEL% NEQ 0 (
-        echo Build failed for aarch64-pc-windows-msvc
-        exit /b 1
-    )
-) else (
-    echo ARM64 toolchain not installed, skipping ARM64 build
-    echo To install: rustup target add aarch64-pc-windows-msvc
-)
+fn configure_android(_target: &str) {
+    // Android-specific configuration
+    println!("cargo:rustc-link-lib=log");
+    println!("cargo:rustc-link-lib=android");
+    
+    // Enable Android-specific features
+    println!("cargo:rustc-cfg=feature=\"android_keystore\"");
+}
 
-REM Create output directory
-echo.
-echo Creating output directory...
-if not exist "output\windows" mkdir "output\windows"
+fn configure_linux(_target: &str) {
+    // Linux-specific configuration
+    println!("cargo:rustc-link-lib=crypto");
+    
+    // Check for libsecret availability
+    if pkg_config::probe_library("libsecret-1").is_ok() {
+        println!("cargo:rustc-cfg=feature=\"linux_secret_service\"");
+    }
+}
 
-REM Copy built libraries
-echo Copying libraries...
-copy "target\x86_64-pc-windows-msvc\release\aeronyx_crypto.dll" "output\windows\aeronyx_crypto_x64.dll" >nul
-copy "target\x86_64-pc-windows-msvc\release\aeronyx_crypto.dll.lib" "output\windows\aeronyx_crypto_x64.lib" >nul
-
-if exist "target\aarch64-pc-windows-msvc\release\aeronyx_crypto.dll" (
-    copy "target\aarch64-pc-windows-msvc\release\aeronyx_crypto.dll" "output\windows\aeronyx_crypto_arm64.dll" >nul
-    copy "target\aarch64-pc-windows-msvc\release\aeronyx_crypto.dll.lib" "output\windows\aeronyx_crypto_arm64.lib" >nul
-)
-
-REM Generate C header file
-echo.
-echo Generating C header file...
-cbindgen --config cbindgen.toml --crate aeronyx-crypto --output output/windows/aeronyx_crypto.h
-
-echo.
-echo Build complete!
-echo Output files are in: output\windows\
-echo.
-echo Files generated:
-dir /b output\windows\
+fn generate_version_info() {
+    // Get version from Cargo.toml
+    let version = env!("CARGO_PKG_VERSION");
+    
+    // Get git commit hash if available
+    let git_hash = std::process::Command::new("git")
+        .args(&["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    
+    // Get build timestamp
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    
+    // Export as environment variables for use in the code
+    println!("cargo:rustc-env=AERONYX_VERSION={}", version);
+    println!("cargo:rustc-env=AERONYX_GIT_HASH={}", git_hash);
+    println!("cargo:rustc-env=AERONYX_BUILD_TIME={}", timestamp);
+}

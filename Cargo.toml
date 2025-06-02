@@ -46,6 +46,10 @@ parking_lot = "0.12.1"
 # Base encoding
 bs58 = "0.5.0"
 
+# Compression for transport
+flate2 = "1.0"
+crc32fast = "1.3"
+
 # Platform specific
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -57,6 +61,24 @@ objc-foundation = "0.1"
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3", features = ["wincred", "dpapi", "memoryapi", "sysinfoapi", "errhandlingapi", "winbase"] }
+
+# Logging (optional)
+[dependencies.log]
+version = "0.4"
+optional = true
+
+[dependencies.env_logger]
+version = "0.10"
+optional = true
+
+# Build dependencies
+[build-dependencies]
+winres = { version = "0.1", optional = true }
+chrono = "0.4"
+pkg-config = { version = "0.3", optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
@@ -65,6 +87,12 @@ proptest = "1.4"
 default = []
 serde = ["dep:serde", "dep:serde_json"]
 wasm = ["getrandom/js"]
+ffi = []
+benchmarks = []
+logging = ["dep:log", "dep:env_logger"]
+std = []
+windows-build = ["dep:winres"]
+linux-build = ["dep:pkg-config"]
 
 [profile.release]
 opt-level = "z"

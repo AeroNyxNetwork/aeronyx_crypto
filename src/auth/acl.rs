@@ -288,4 +288,188 @@ impl AccessControlList {
         if let Some(entry) = entries.get(public_key) {
             entry.enabled && !entry.is_expired() && entry.permissions.has_any()
         } else {
-            !self.strict_mode && self.d
+            !self.strict_mode && self.default_permissions.has_any()
+        }
+    }
+    
+    /// Get permissions for a client
+    pub fn get_permissions(&self, public_key: &str) -> Permissions {
+        let entries = self.entries.read();
+        
+        if let Some(entry) = entries.get(public_key) {
+            if entry.enabled && !entry.is_expired() {
+                entry.permissions
+            } else {
+                Permissions {
+                    read: false,
+                    write: false,
+                    execute: false,
+                    admin: false,
+                }
+            }
+        } else if !self.strict_mode {
+            self.default_permissions
+        } else {
+            Permissions {
+                read: false,
+                write: false,
+                execute: false,
+                admin: false,
+            }
+        }
+    }
+    
+    /// List all active entries
+    pub fn list_entries(&self) -> Vec<AccessControlEntry> {
+        let entries = self.entries.read();
+        entries.values()
+            .filter(|e| e.enabled && !e.is_expired())
+            .cloned()
+            .collect()
+    }
+    
+    /// Clean up expired entries
+    pub fn cleanup_expired(&self) {
+        let mut entries = self.entries.write();
+        entries.retain(|_, entry| !entry.is_expired());
+    }
+    
+    /// Export ACL to JSON
+    pub fn export(&self) -> Result<String, CryptoError> {
+        let entries = self.entries.read();
+        let export_data = entries.values().cloned().collect::<Vec<_>>();
+        serde_json::to_string_pretty(&export_data)
+            .map_err(|e| CryptoError::InvalidFormat(e.to_string()))
+    }
+    
+    /// Import ACL from JSON
+    pub fn import(&self, json: &str) -> Result<(), CryptoError> {
+        let import_data: Vec<AccessControlEntry> = serde_json::from_str(json)
+            .map_err(|e| CryptoError::InvalidFormat(e.to_string()))?;
+            
+        let mut entries = self.entries.write();
+        for entry in import_data {
+            entries.insert(entry.public_key.clone(), entry);
+        }
+        
+        Ok(())
+    }
+}
+
+/// ACL manager with persistence support
+pub struct AccessControlManager {
+    acl: AccessControlList,
+    persistence_path: Option<String>,
+}
+
+impl AccessControlManager {
+    /// Create a new ACL manager
+    pub fn new() -> Self {
+        Self {
+            acl: AccessControlList::new(),
+            persistence_path: None,
+        }
+    }
+    
+    /// Create a new ACL manager with persistence
+    pub fn with_persistence(path: String) -> Result<Self, CryptoError> {
+        let mut manager = Self {
+            acl: AccessControlList::new(),
+            persistence_path: Some(path.clone()),
+        };
+        
+        // Try to load existing ACL
+        if std::path::Path::new(&path).exists() {
+            manager.load()?;
+        }
+        
+        Ok(manager)
+    }
+    
+    /// Add or update an ACL entry
+    pub fn add_entry(&self, entry: AccessControlEntry) -> Result<(), CryptoError> {
+        self.acl.add_entry(entry)?;
+        self.save()?;
+        Ok(())
+    }
+    
+    /// Check if a client is allowed
+    pub fn is_allowed(&self, public_key: &str) -> bool {
+        self.acl.has_access(public_key)
+    }
+    
+    /// Save ACL to disk
+    fn save(&self) -> Result<(), CryptoError> {
+        if let Some(path) = &self.persistence_path {
+            let json = self.acl.export()?;
+            std::fs::write(path, json)
+                .map_err(|e| CryptoError::InvalidFormat(e.to_string()))?;
+        }
+        Ok(())
+    }
+    
+    /// Load ACL from disk
+    fn load(&mut self) -> Result<(), CryptoError> {
+        if let Some(path) = &self.persistence_path {
+            let json = std::fs::read_to_string(path)
+                .map_err(|e| CryptoError::InvalidFormat(e.to_string()))?;
+            self.acl.import(&json)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_permissions() {
+        let perms = Permissions::read_write();
+        assert!(perms.read);
+        assert!(perms.write);
+        assert!(!perms.execute);
+        assert!(!perms.admin);
+        assert!(perms.has_any());
+    }
+    
+    #[test]
+    fn test_acl_basic() {
+        let acl = AccessControlList::new();
+        let pubkey = bs58::encode("test_key").into_string();
+        
+        // Add entry
+        let entry = AccessControlEntry::new(pubkey.clone(), Permissions::full());
+        acl.add_entry(entry).unwrap();
+        
+        // Check permissions
+        assert!(acl.is_allowed(&pubkey, "read"));
+        assert!(acl.is_allowed(&pubkey, "write"));
+        assert!(acl.is_allowed(&pubkey, "execute"));
+        assert!(!acl.is_allowed(&pubkey, "admin"));
+    }
+    
+    #[test]
+    fn test_acl_expiration() {
+        let acl = AccessControlList::new();
+        let pubkey = bs58::encode("test_key").into_string();
+        
+        // Add entry that expires immediately
+        let entry = AccessControlEntry::new(pubkey.clone(), Permissions::full())
+            .with_expiration(Duration::from_secs(0));
+        acl.add_entry(entry).unwrap();
+        
+        // Should be expired
+        assert!(!acl.has_access(&pubkey));
+    }
+    
+    #[test]
+    fn test_strict_mode() {
+        let acl = AccessControlList::strict();
+        let unknown_key = bs58::encode("unknown").into_string();
+        
+        // Unknown keys should be denied in strict mode
+        assert!(!acl.has_access(&unknown_key));
+        assert!(!acl.is_allowed(&unknown_key, "read"));
+    }
+}

@@ -33,8 +33,26 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
-#![deny(unsafe_code)]
-#![allow(unsafe_code)] // Required for FFI and platform-specific code
+#![forbid(unsafe_code)] // Override with allow where necessary
+#![deny(
+    clippy::all,
+    clippy::cargo,
+    clippy::nursery,
+    clippy::pedantic,
+    nonstandard_style,
+    rust_2018_idioms,
+    missing_debug_implementations,
+    missing_copy_implementations,
+    trivial_casts,
+    trivial_numeric_casts,
+    unused_import_braces,
+    unused_qualifications
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc
+)]
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -42,16 +60,22 @@ extern crate std;
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+#[cfg(not(feature = "std"))]
+use alloc::{string::String, vec::Vec};
+
 // Core modules
 mod crypto;
 mod errors;
-mod ffi;
 mod secure_memory;
 mod key_derivation;
 mod crypto_provider;
 mod standards;
 mod protocol_support;
 mod crypto_extensions;
+
+// Conditional modules
+#[cfg(feature = "ffi")]
+mod ffi;
 
 // SIMD optimizations
 #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
@@ -104,10 +128,11 @@ pub mod transport;
 
 // Power management
 /// Power-aware cryptographic operations
+#[cfg(feature = "power")]
 pub mod power;
 
 // Examples module (only included in debug/test builds)
-#[cfg(any(debug_assertions, test))]
+#[cfg(any(debug_assertions, test, doc))]
 pub mod examples;
 
 // Benchmarks module
@@ -153,17 +178,21 @@ pub use crypto_provider::{
 pub use standards::{ComplianceChecker, StandardCompliance};
 pub use crypto_extensions::{MobileCrypto, MobileKeypair, MobileSessionManager, StorageHint};
 
+// Add missing password module export
+pub use key_derivation::password::derive_key_from_password;
+
 // Version information
 /// Library version string
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Git commit hash
-pub const GIT_HASH: &str = env!("AERONYX_GIT_HASH", "unknown");
+pub const GIT_HASH: &str = option_env!("AERONYX_GIT_HASH").unwrap_or("unknown");
 
 /// Build timestamp
-pub const BUILD_TIME: &str = env!("AERONYX_BUILD_TIME", "unknown");
+pub const BUILD_TIME: &str = option_env!("AERONYX_BUILD_TIME").unwrap_or("unknown");
 
 /// Get comprehensive version information
+#[must_use]
 pub fn version_info() -> VersionInfo {
     VersionInfo {
         version: VERSION,
@@ -208,6 +237,12 @@ fn get_enabled_features() -> Vec<&'static str> {
     #[cfg(feature = "std")]
     features.push("std");
     
+    #[cfg(feature = "power")]
+    features.push("power");
+    
+    #[cfg(feature = "logging")]
+    features.push("logging");
+    
     features
 }
 
@@ -229,7 +264,8 @@ pub mod compat {
     
     impl EncryptionAlgorithm {
         /// Convert to string representation
-        pub fn as_str(&self) -> &'static str {
+        #[must_use]
+        pub const fn as_str(&self) -> &'static str {
             match self {
                 Self::ChaCha20Poly1305 => "chacha20-poly1305",
                 Self::Aes256Gcm => "aes-256-gcm",
@@ -237,6 +273,7 @@ pub mod compat {
         }
         
         /// Parse from string
+        #[must_use]
         pub fn from_str(s: &str) -> Option<Self> {
             match s {
                 "chacha20-poly1305" => Some(Self::ChaCha20Poly1305),
@@ -309,6 +346,7 @@ pub mod compat {
     }
     
     /// Create authentication challenge (matching node's challenge.rs)
+    #[must_use]
     pub fn create_auth_challenge() -> Vec<u8> {
         crypto_extensions::MobileCrypto::create_auth_challenge()
     }
@@ -327,6 +365,10 @@ pub mod compat {
     }
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 /// Initialize the library with platform-specific features
 /// 
 /// This function should be called once at application startup to ensure
@@ -336,6 +378,10 @@ pub mod compat {
 /// 
 /// Returns an error if platform initialization fails.
 pub fn initialize() -> Result<()> {
+    if INITIALIZED.swap(true, Ordering::SeqCst) {
+        return Ok(()); // Already initialized
+    }
+    
     // Initialize logging if enabled
     #[cfg(all(feature = "std", feature = "logging"))]
     {
@@ -343,28 +389,22 @@ pub fn initialize() -> Result<()> {
         static INIT: Once = Once::new();
         
         INIT.call_once(|| {
-            env_logger::builder()
+            let _ = env_logger::builder()
                 .filter_level(log::LevelFilter::Info)
                 .format_timestamp_millis()
-                .init();
+                .try_init();
         });
     }
     
     // Platform-specific initialization
     #[cfg(target_os = "windows")]
-    {
-        initialize_windows()?;
-    }
+    initialize_windows()?;
     
     #[cfg(target_os = "android")]
-    {
-        initialize_android()?;
-    }
+    initialize_android()?;
     
     #[cfg(target_os = "ios")]
-    {
-        initialize_ios()?;
-    }
+    initialize_ios()?;
     
     // Initialize SIMD if available
     #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
@@ -376,10 +416,15 @@ pub fn initialize() -> Result<()> {
     let _ = CRYPTO_PROVIDER.get_cipher("chacha20-poly1305")
         .ok_or_else(|| CryptoError::InvalidFormat("Crypto provider initialization failed".into()))?;
     
+    // Run self-test in debug mode
+    #[cfg(debug_assertions)]
+    self_test()?;
+    
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
 fn initialize_windows() -> Result<()> {
     // Ensure Windows crypto providers are available
     use winapi::um::wincrypt::*;
@@ -401,7 +446,7 @@ fn initialize_windows() -> Result<()> {
             ));
         }
         
-        CryptReleaseContext(h_prov, 0);
+        let _ = CryptReleaseContext(h_prov, 0);
     }
     
     Ok(())
@@ -421,6 +466,7 @@ fn initialize_ios() -> Result<()> {
 }
 
 /// Global library configuration
+#[derive(Debug, Clone)]
 pub struct Config {
     /// Enable hardware acceleration
     pub use_hardware_acceleration: bool,
@@ -446,20 +492,18 @@ impl Default for Config {
 /// Configure global library settings
 pub fn configure(config: Config) -> Result<()> {
     // Apply configuration settings
+    #[cfg(feature = "power")]
     if config.power_saving_mode {
-        #[cfg(feature = "power")]
-        {
-            let power_manager = std::sync::Arc::new(power::PowerAwareCrypto::new());
-            power_manager.set_low_power_mode(true);
-        }
+        use crate::power::PowerAwareCrypto;
+        use std::sync::Arc;
+        let power_manager = Arc::new(PowerAwareCrypto::new());
+        power_manager.set_low_power_mode(true);
     }
     
     // Configure secure storage path if provided
+    #[cfg(feature = "std")]
     if let Some(path) = config.secure_storage_path {
-        #[cfg(feature = "std")]
-        {
-            std::env::set_var("AERONYX_SECURE_STORAGE_PATH", path);
-        }
+        std::env::set_var("AERONYX_SECURE_STORAGE_PATH", path);
     }
     
     Ok(())
@@ -505,6 +549,12 @@ pub fn self_test() -> Result<()> {
         return Err(CryptoError::KeyError("Key derivation failed".into()));
     }
     
+    // Test secure memory
+    let secure_buf = SecureBuffer::<u8>::from_vec(vec![1, 2, 3, 4, 5]);
+    if secure_buf.len() != 5 {
+        return Err(CryptoError::InvalidFormat("Secure buffer test failed".into()));
+    }
+    
     Ok(())
 }
 
@@ -531,7 +581,7 @@ mod tests {
     
     #[test]
     fn test_compat_layer() {
-        let (private_key, public_key) = generate_keypair().unwrap();
+        let (private_key, _public_key) = generate_keypair().unwrap();
         
         // Test flexible encryption
         let session_key = vec![0u8; 32];
@@ -592,7 +642,19 @@ mod tests {
         assert_eq!(session.public_key, pubkey_str);
         assert!(session.state.is_authenticated());
     }
+    
+    #[test]
+    fn test_config() {
+        let config = Config {
+            use_hardware_acceleration: false,
+            power_saving_mode: true,
+            max_memory_usage: Some(1024 * 1024 * 100), // 100MB
+            secure_storage_path: Some("/tmp/aeronyx".to_string()),
+        };
+        
+        assert!(configure(config).is_ok());
+    }
 }
 
 // Re-export Result type for convenience
-pub type Result<T> = std::result::Result<T, CryptoError>;
+pub type Result<T> = core::result::Result<T, CryptoError>;

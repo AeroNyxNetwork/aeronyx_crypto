@@ -1,9 +1,9 @@
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use chacha20poly1305::aead::{Aead, NewAead};
 use aes_gcm::{Aes256Gcm, KeyInit};
-use aes_gcm::aead::{AeadInPlace, Payload};
+use aes_gcm::aead::{AeadInPlace, Payload, Tag};
 use rand::{RngCore, rngs::OsRng};
-use ed25519_dalek::{Keypair, Signer, PublicKey, SecretKey, Signature};
+use ed25519_dalek::{Keypair, Signer, Verifier, PublicKey, SecretKey, Signature};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use hkdf::Hkdf;
